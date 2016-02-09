@@ -7,8 +7,11 @@ import com.krinchan.minecraft.diamondguarantor.events.PlayerGotDiamondsEvent;
 import com.krinchan.minecraft.diamondguarantor.events.PlayerNeedsDiamondsEvent;
 import org.spongepowered.api.entity.living.player.Player;
 import org.spongepowered.api.event.Listener;
+import org.spongepowered.api.event.Order;
 import org.spongepowered.api.event.block.ChangeBlockEvent;
 import org.spongepowered.api.event.cause.Cause;
+import org.spongepowered.api.event.game.state.GameStartedServerEvent;
+import org.spongepowered.api.event.network.ClientConnectionEvent;
 import org.spongepowered.api.event.world.SaveWorldEvent;
 import org.spongepowered.api.world.World;
 
@@ -26,6 +29,11 @@ public class ScoreChangeListener {
     public ScoreChangeListener(DiamondGuarantor plugin) {
         this.scoreService = plugin.getScoreService();
         this.plugin = plugin;
+    }
+
+    @Listener(order=Order.LAST)
+    public void onGameStartedEvent(GameStartedServerEvent event) {
+        scoreService.loadScores();
     }
 
     @Listener
@@ -74,8 +82,19 @@ public class ScoreChangeListener {
         scoreService.incrementPlayerScore(event.getTargetEntity(), (plugin.getConfig().getDiamondValue() * -1));
     }
 
+    @Listener
+    public void onClientDisconnectionEvent(ClientConnectionEvent.Disconnect event) {
+        scoreService.unloadPlayer(event.getTargetEntity());
+    }
+
+    @Listener
+    public void onClientJoinEvent(ClientConnectionEvent.Join event) {
+        scoreService.loadPlayer(event.getTargetEntity());
+    }
+
     private void emitPlayerNeedsDiamondsEvent(PlayerDiamondScoreIncrementEvent event) {
         plugin.getEventManager().post(new PlayerNeedsDiamondsEvent(event.getTargetEntity(),
                 Cause.of(plugin, event.getTargetEntity(), event)));
     }
+
 }

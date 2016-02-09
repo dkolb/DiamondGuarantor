@@ -1,5 +1,6 @@
 package com.krinchan.minecraft.diamondguarantor.data;
 
+import com.google.common.cache.*;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.krinchan.minecraft.diamondguarantor.DiamondGuarantor;
@@ -15,61 +16,129 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
  * Created by david on 2/6/16.
  */
-public class DiamondScoreJsonFileProvider extends DiamondScoreService {
+public class DiamondScoreJsonFileProvider implements DiamondScoreService {
 
-    private Path scoreFile;
+    private Path scoreDirectory;
     private Logger logger;
+    private boolean failureMode;
+    private LoadingCache<UUID, PlayerData> playerDataCache;
 
-    private Map<UUID, Integer> scores;
+    private static final Gson GSON_PARSER = new Gson();
 
     public DiamondScoreJsonFileProvider(DiamondGuarantor plugin) {
-        super(plugin);
-        this.scoreFile = plugin.getConfig().getConfigPath().getParent().resolve("scores.json");
+        this.scoreDirectory = plugin.getConfig().getConfigPath().getParent().resolve("playerData");
         this.logger = plugin.getLogger();
-        loadScores();
+        this.failureMode = checkScoreDirectory();
+        this.playerDataCache = CacheBuilder.newBuilder()
+                .expireAfterAccess(10, TimeUnit.MINUTES)
+                .maximumSize(100)
+                .removalListener(new RemovalListener<UUID, PlayerData>() {
+                    @Override
+                    public void onRemoval(RemovalNotification<UUID, PlayerData> notification) {
+                        savePlayerData(notification.getKey(), notification.getValue());
+                    }
+                })
+                .build(new CacheLoader<UUID, PlayerData>() {
+                           @Override
+                           public PlayerData load(UUID player) throws Exception {
+                               return readPlayerData(player);
+                           }
+                       }
+
+                );
     }
 
     @Override
     public int getPlayerScore(Player player) {
-        return scores.getOrDefault(player.getUniqueId(), 0);
+        try {
+            return playerDataCache.get(player.getUniqueId()).getScore();
+        } catch (ExecutionException e) {
+            logExecutionException(player, e);
+            return 0;
+        }
     }
 
     @Override
     public void setPlayerScore(Player player, int score) {
-        scores.put(player.getUniqueId(), score);
+        try {
+            playerDataCache.get(player.getUniqueId()).setScore(score);
+        } catch (ExecutionException e) {
+            logExecutionException(player, e);
+        }
     }
 
     @Override
     public int incrementPlayerScore(Player player, int increment) {
-        Integer result = scores.put(player.getUniqueId(), (scores.getOrDefault(player.getUniqueId(), 0) + increment));
-        logger.debug("{} is at score {}", player, result);
-        return result;
-    }
-
-    @Override
-    public void loadScores() {
-        Type t = new TypeToken<ConcurrentHashMap<UUID, Integer>>(){}.getType();
-        scores = readScoreFile()
-                .map(s -> new Gson().<ConcurrentHashMap<UUID, Integer>>fromJson(s, t))
-                .orElse(new ConcurrentHashMap<>());
-    }
-
-    @Override
-    public void saveScores() {
         try {
-            Files.write(scoreFile, Arrays.asList(new Gson().toJson(scores)));
-        } catch (IOException e) {
-            logger.error("Cannot write out scores file {} due to error {}.", scoreFile, e.getMessage());
+            PlayerData data = playerDataCache.get(player.getUniqueId());
+            int result = data.getScore() + increment;
+
+            if(result >= 0) {
+                data.setScore(result);
+            }
+
+            logger.debug("{} is at score {}", player, result);
+            return result;
+        } catch (ExecutionException e) {
+            logExecutionException(player, e);
+            return 0;
         }
     }
 
 
-    private Optional<String> readScoreFile() {
+    @Override
+    public void loadPlayer(Player player) {
+        //no op, cache lazy loads.
+    }
+
+    @Override
+    public void unloadPlayer(Player player) {
+        playerDataCache.invalidate(player.getUniqueId());
+    }
+
+    @Override
+    public void loadScores() {
+        //no op, our cache lazy loads.
+    }
+
+    @Override
+    public void saveScores() {
+        playerDataCache.asMap().forEach(this::savePlayerData);
+    }
+
+    private void savePlayerData(UUID player, PlayerData data) {
+        if(failureMode) {
+            return;
+        }
+        Path scoreFile = scoreDirectory.resolve(player.toString());
+        try {
+            Files.write(scoreFile, Arrays.asList(GSON_PARSER.toJson(data)));
+        } catch (IOException e) {
+            logger.error(
+                    String.format("Could not write %s's data to %s.",
+                            player,
+                            scoreFile),
+                    e);
+        }
+
+    }
+
+    private PlayerData readPlayerData(UUID player) {
+        return readScoreFile(player)
+                .map(s -> GSON_PARSER.fromJson(s, PlayerData.class))
+                .orElse(new PlayerData());
+    }
+
+    private Optional<String> readScoreFile(UUID player) {
+
+        Path scoreFile = scoreDirectory.resolve(player.toString());
 
         Optional<String> result = Optional.empty();
         try {
@@ -79,9 +148,52 @@ public class DiamondScoreJsonFileProvider extends DiamondScoreService {
                             .collect(Collectors.joining())
             );
         } catch (IOException e) {
-            logger.error("Failed to read score file, {}, with error {}.  Starting with empty scores.",
+            logger.debug("Failed to read score file, {}, with error {}.  Starting with empty scores.",
                     scoreFile, e.getMessage());
         }
         return result;
     }
+
+    private boolean checkScoreDirectory() {
+        if (!Files.exists(scoreDirectory)) {
+            try {
+                Files.createDirectory(scoreDirectory);
+            } catch (IOException e) {
+                logger.error("Could not create {} as a directory.  Running in in-memory failure mode.", scoreDirectory);
+                return true;
+            }
+
+        }
+
+        if (!Files.isDirectory(scoreDirectory)) {
+            logger.error("{} is not a directory!  Running in in-memory failure mode.");
+            return true;
+        }
+
+        if (!Files.isWritable(scoreDirectory)) {
+            logger.error("Cannot write to {}!  Running in in-memory failure mode.");
+            return true;
+        }
+
+        return false;
+    }
+
+    private void logExecutionException(Player player, ExecutionException exception) {
+        logger.warn(String.format("Failed to load scores for %s/%s.", player.getName(), player.getUniqueId(),
+                exception));
+    }
+
+    private static class PlayerData {
+        private int score;
+
+        public int getScore() {
+            return score;
+        }
+
+        public void setScore(int score) {
+            this.score = score;
+        }
+    }
+
+
 }

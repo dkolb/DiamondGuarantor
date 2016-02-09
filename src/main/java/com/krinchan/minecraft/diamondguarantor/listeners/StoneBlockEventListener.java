@@ -35,7 +35,7 @@ public class StoneBlockEventListener {
 
     @Listener
     public void onBlockBreak(ChangeBlockEvent.Break event) {
-        if(!isValidEvent(event)) {
+        if(!isValidBreakingEvent(event)) {
             return;
         }
 
@@ -44,7 +44,7 @@ public class StoneBlockEventListener {
 
     @Listener
     public void onBlockPlace(ChangeBlockEvent.Place event) {
-        if(!isValidEvent(event)) {
+        if(!isValidPlacingEvent(event)) {
             return;
         }
 
@@ -56,10 +56,17 @@ public class StoneBlockEventListener {
                 Cause.of(plugin, player, event)));
     }
 
-    private boolean isValidEvent(ChangeBlockEvent event) {
+    private boolean isValidPlacingEvent(ChangeBlockEvent.Place event) {
         return !event.isCancelled()
                 && hasPlayer(event)
-                && hasTransactionAboutStoneBlock(event)
+                && hasTransactionFinallyAboutStoneBlock(event)
+                && isAtRightDepth(event);
+    }
+
+    private boolean isValidBreakingEvent(ChangeBlockEvent.Break event) {
+        return !event.isCancelled()
+                && hasPlayer(event)
+                && hasTransactionOriginallyAboutStoneBlock(event)
                 && isAtRightDepth(event);
     }
 
@@ -70,9 +77,15 @@ public class StoneBlockEventListener {
                  .orElse(false);
     }
 
-    private boolean hasTransactionAboutStoneBlock(ChangeBlockEvent event) {
+    private boolean hasTransactionOriginallyAboutStoneBlock(ChangeBlockEvent.Break event) {
         return event.getTransactions().stream()
-                .filter(this::isTransactionAboutStoneBlock)
+                .filter(this::isTransactionAboutBreakingStoneBlock)
+                .findFirst().isPresent();
+    }
+
+    private boolean hasTransactionFinallyAboutStoneBlock(ChangeBlockEvent.Place event) {
+        return event.getTransactions().stream()
+                .filter(this::isTransactionAboutPlacingStoneBlock)
                 .findFirst().isPresent();
     }
 
@@ -86,12 +99,16 @@ public class StoneBlockEventListener {
 
     private Optional<Transaction<BlockSnapshot>> getStoneBlockTransaction(ChangeBlockEvent event) {
         return event.getTransactions().stream()
-                .filter(this::isTransactionAboutStoneBlock)
+                .filter(t -> isTransactionAboutBreakingStoneBlock(t) || isTransactionAboutPlacingStoneBlock(t))
                 .findFirst();
     }
 
-    private boolean isTransactionAboutStoneBlock(Transaction<BlockSnapshot> t) {
+    private boolean isTransactionAboutBreakingStoneBlock(Transaction<BlockSnapshot> t) {
         return t.getOriginal().getState().getType().equals(BlockTypes.STONE);
+    }
+
+    private boolean isTransactionAboutPlacingStoneBlock(Transaction<BlockSnapshot> t) {
+        return t.getFinal().getState().getType().equals(BlockTypes.STONE);
     }
 
 }
