@@ -33,7 +33,7 @@ public class SetDiamondScoreCommand implements CommandExecutor {
         Player target = args.<Player>getOne("player").get();
         int score = args.<Integer>getOne("score").get();
 
-        plugin.getScoreService().setPlayerScore(target.getUniqueId(), score);
+        plugin.getScoreService().setPlayerScore(target, score);
 
         return CommandResult.success();
     }

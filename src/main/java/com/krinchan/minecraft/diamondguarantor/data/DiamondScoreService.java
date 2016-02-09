@@ -19,27 +19,13 @@ import java.util.UUID;
 /**
  * Created by david on 2/6/16.
  */
-public abstract class DiamondScoreService {
+public interface DiamondScoreService {
 
-    public abstract int getPlayerScore(Player player);
-    public abstract void setPlayerScore(Player player, int score);
-    public abstract int incrementPlayerScore(Player player, int increment);
-    public abstract void saveScores();
-    public abstract void loadScores();
-
-    private DiamondGuarantor plugin;
-    private Optional<World> worldSaveKey;
-    private Logger logger;
-    private DiamondGuarantorConfig config;
-
-    protected DiamondScoreService(DiamondGuarantor plugin) {
-        this.plugin = plugin;
-        this.logger = plugin.getLogger();
-        this.config = plugin.getConfig();
-        this.worldSaveKey = Optional.empty();
-    }
-
-
-
-
+    int getPlayerScore(Player player);
+    void setPlayerScore(Player player, int score);
+    int incrementPlayerScore(Player player, int increment);
+    void saveScores();
+    void loadScores();
+    void loadPlayer(Player player);
+    void unloadPlayer(Player player);
 }
